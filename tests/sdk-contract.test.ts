@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -21,4 +22,12 @@ test("uses only public SDK and package-local imports", () => {
 
   assert.deepEqual(scan.privateDependencies, []);
   assert.deepEqual(scan.violations, []);
+});
+
+test("keeps the plugin SDK available to production git installs", () => {
+  const manifest = JSON.parse(
+    readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+  ) as { dependencies?: Record<string, string> };
+
+  assert.ok(manifest.dependencies?.["@get-bb/plugin-sdk"]);
 });
