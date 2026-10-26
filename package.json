@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-opencode2",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "BB plugin that runs threads through an installed OpenCode v2 server.",
   "keywords": [
     "bb-plugin",
