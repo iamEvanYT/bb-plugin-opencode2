@@ -86,20 +86,6 @@ export const opencodeSettingsRpcContract = defineRpcContract({
       .object({ models: z.array(modelSummarySchema).max(10_000) })
       .strict(),
   },
-  // The agent picked in a new-thread composer, held until its thread exists.
-  getNewThreadAgent: {
-    input: z.object({ projectId: z.string().min(1) }).strict(),
-    output: z.object({ agent: z.string().min(1).nullable() }).strict(),
-  },
-  setNewThreadAgent: {
-    input: z
-      .object({
-        projectId: z.string().min(1),
-        agent: z.string().min(1).nullable(),
-      })
-      .strict(),
-    output: z.object({ agent: z.string().min(1).nullable() }).strict(),
-  },
   saveSettings: {
     input: modelSettingsSchema,
     output: modelSettingsSchema,

@@ -4,7 +4,6 @@
 // provider metadata and keeps process/API details out of the BB server runtime.
 import { type BbPluginApi } from "@get-bb/plugin-sdk";
 import {
-  AGENT_OPTION_ID,
   opencodeHostContract,
   opencodeSettingsRpcContract,
   type HostStatus,
@@ -14,34 +13,11 @@ import { normalizeModelSettings } from "./model-settings.ts";
 
 const PROVIDER_ID = "opencode2";
 const SETTINGS_KEY = "model-settings";
-const SEEDS_KEY = "new-thread-agents";
-// A new-thread pick that is never used must not attach to a thread much later.
-const SEED_TTL_MS = 10 * 60_000;
-const ALIGN_POLL_MS = 300;
-const ALIGN_TIMEOUT_MS = 30_000;
-
-type AgentSeed = { agent: string; at: number };
 
 export default async function plugin(bb: BbPluginApi) {
   let modelSettings = normalizeModelSettings(
     await bb.storage.kv.get(SETTINGS_KEY),
   );
-  // The composer's agent pick before its thread exists, by project. The new
-  // thread takes it once: BB's own session-option selection can only be set on
-  // a thread that already exists, so the first turn gets it as a provider
-  // option instead.
-  const seeds = new Map<string, AgentSeed>(
-    Object.entries(
-      ((await bb.storage.kv.get(SEEDS_KEY)) as Record<
-        string,
-        AgentSeed
-      > | null) ?? {},
-    ),
-  );
-  const newThreads = new Set<string>();
-  bb.events.on("thread.created", ({ thread }) => {
-    if (thread.providerId === PROVIDER_ID) newThreads.add(thread.id);
-  });
   const host = bb.hosts.experimental_client({ contract: opencodeHostContract });
   const syncedSettings = new Map<string, string>();
 
@@ -112,61 +88,6 @@ export default async function plugin(bb: BbPluginApi) {
     };
   }
 
-  function freshSeed(projectId: string) {
-    const seed = seeds.get(projectId);
-    return seed && Date.now() - seed.at <= SEED_TTL_MS ? seed.agent : null;
-  }
-
-  async function setSeed(projectId: string, agent: string | null) {
-    if (agent === null) seeds.delete(projectId);
-    else seeds.set(projectId, { agent, at: Date.now() });
-    await bb.storage.kv.set(SEEDS_KEY, Object.fromEntries(seeds));
-    return { agent };
-  }
-
-  // The new thread's native selection may still hold a stale draft choice from
-  // before it existed, which would show as pending and apply on a later turn.
-  // Overwrite it once the host has reported the option; the thread cannot take
-  // a selection before that.
-  async function alignNativeSelection(threadId: string, agent: string) {
-    const deadline = Date.now() + ALIGN_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, ALIGN_POLL_MS));
-      try {
-        const timeline = await bb.sdk.threads.timeline({
-          threadId,
-          summaryOnly: "true",
-        });
-        const option = timeline.sessionOptions?.find(
-          (candidate) => candidate.id === AGENT_OPTION_ID,
-        );
-        if (!option) continue;
-        if (option.value === agent && (option.pendingValue ?? null) === null)
-          return;
-        await bb.sdk.threads.update({
-          threadId,
-          sessionOptions: { [AGENT_OPTION_ID]: agent },
-        });
-      } catch (error) {
-        bb.log.warn(
-          `Could not align the agent selection: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        return;
-      }
-    }
-  }
-
-  // Only a thread's first command may take the pick, and only a thread created
-  // while this plugin was running, so an older thread never inherits it.
-  function takeSeed(threadId: string, projectId: string) {
-    if (!newThreads.delete(threadId)) return undefined;
-    const agent = freshSeed(projectId);
-    if (agent === null) return undefined;
-    void setSeed(projectId, null);
-    void alignNativeSelection(threadId, agent);
-    return agent;
-  }
-
   async function getStatus() {
     const hosts = (await bb.sdk.hosts.list()).filter(
       (item) => item.status === "connected",
@@ -194,8 +115,6 @@ export default async function plugin(bb: BbPluginApi) {
   bb.rpc.register(opencodeSettingsRpcContract, {
     getSettings: () => modelSettings,
     listModels,
-    getNewThreadAgent: ({ projectId }) => ({ agent: freshSeed(projectId) }),
-    setNewThreadAgent: ({ projectId, agent }) => setSeed(projectId, agent),
     getStatus,
     async saveSettings(next) {
       modelSettings = normalizeModelSettings(next);
@@ -238,8 +157,6 @@ export default async function plugin(bb: BbPluginApi) {
       installUrl: "https://opencode.ai/v2/docs/",
       brandPrefix: "OpenCode ",
       iconTint: { light: "#18181B", dark: "#FAFAFA" },
-      planModeCopy:
-        "OpenCode's read-only plan agent will explore and plan without editing files.",
     },
     // Only show the provider when `opencode2` is installed on the target machine.
     experimental_visibility: "installed",
@@ -263,16 +180,15 @@ export default async function plugin(bb: BbPluginApi) {
         "ultra",
       ],
     },
-    composerActions: ["plan"],
+    // BB's plan mode is not offered; `plan` is an OpenCode agent picked through
+    // the `agent` session option instead.
+    composerActions: [],
     // OpenCode discovers skills in more places than BB scans by default;
     // the host entry answers with the roots OpenCode actually uses.
     experimental_resolvesNativeRoots: true,
     // Settings reach every session and turn command as providerOptions, so a
     // change applies on the next turn without waiting for the host sync.
-    deriveProviderOptions: ({ threadId, projectId }) => {
-      const agent = takeSeed(threadId, projectId);
-      return { modelSettings, ...(agent ? { agent } : {}) };
-    },
+    deriveProviderOptions: () => ({ modelSettings }),
   });
 
   bb.log.info("registered OpenCode v2 provider");

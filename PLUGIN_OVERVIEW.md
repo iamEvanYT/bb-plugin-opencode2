@@ -11,8 +11,9 @@ patches.
 - **Permission modes carry over.** Accept edits, auto, and full map to
   OpenCode permission rules. A denial goes back to the agent as feedback and the
   turn continues.
-- **`/plan` runs OpenCode's read-only plan agent**, and OpenCode's questions use
-  BB's native question UI.
+- **Pick OpenCode's primary agent** (`build`, `plan`, or your own) in the Agent
+  row of BB's model switcher, and OpenCode's questions use BB's native question
+  UI.
 - **BB's tools and skills work inside OpenCode.** BB dynamic tools are exposed
   through a local MCP server, BB's `/` menu lists the skills OpenCode finds for
   the workspace, and shells get the `bb` CLI on `PATH`.

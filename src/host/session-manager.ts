@@ -1,5 +1,9 @@
 import { fileURLToPath } from "node:url";
-import { AGENT_OPTION_ID, type ModelSettings } from "../settings-contract.ts";
+import {
+  AGENT_OPTION_ID,
+  DEFAULT_AGENT,
+  type ModelSettings,
+} from "../settings-contract.ts";
 import { dynamicToolCallRouter, emit } from "./bridge-runtime.ts";
 import {
   startDynamicToolsMcpProxy,
@@ -98,20 +102,14 @@ export function sessionFromParams(
     bridgeEnvVars,
     dynamicToolScope: {},
     model,
-    // The plugin's composer pick for a brand-new thread (`providerOptions`)
-    // beats a native choice carried over from an earlier composer draft.
-    ...agentChoiceAtStart(options),
+    agentChoice: nativeAgentChoice(options),
     usage: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
   };
 }
 
-function agentChoiceAtStart(options: RecordValue) {
-  const seed = stringValue(inputRecord(options.providerOptions).agent);
-  if (seed !== undefined) return { agentChoice: seed, agentSeeded: true };
-  const native = stringValue(
-    inputRecord(options.sessionOptions)[AGENT_OPTION_ID],
-  );
-  return native === undefined ? {} : { agentChoice: native };
+/** The agent BB's `agent` session option carries, when it sent one. */
+function nativeAgentChoice(options: RecordValue) {
+  return stringValue(inputRecord(options.sessionOptions)[AGENT_OPTION_ID]);
 }
 
 async function installDynamicTools(session: SessionState) {
@@ -382,20 +380,14 @@ export async function shutdownSessions(reason: string): Promise<void> {
 }
 
 /**
- * Switch the OpenCode agent. BB plan mode selects OpenCode's read-only
- * `plan` agent; leaving plan mode restores the agent picked in the composer,
- * or `build` when none was picked. Without a pick, an agent the user chose in
- * OpenCode itself is left alone.
+ * Switch the OpenCode agent to the one picked through BB's `agent` session
+ * option. Without a pick, an agent the user chose in OpenCode itself is left
+ * alone.
  */
 export async function ensureSessionAgent(
   session: SessionState,
-  promptMode: unknown,
-  requested?: string,
+  desired?: string,
 ) {
-  const desired =
-    promptMode === "plan"
-      ? "plan"
-      : (requested ?? (session.agent === "plan" ? "build" : undefined));
   if (!desired || session.agent === desired) return;
   try {
     await openCodeServer.request(
@@ -404,7 +396,7 @@ export async function ensureSessionAgent(
     );
   } catch (error) {
     // A picked agent that no longer exists must not fail every turn.
-    if (desired === "plan" || desired === "build") throw error;
+    if (desired === DEFAULT_AGENT || desired === "plan") throw error;
     process.stderr.write(
       `[opencode2] Could not switch to agent ${desired}: ${error instanceof Error ? error.message : String(error)}\n`,
     );
@@ -438,27 +430,8 @@ export async function publishAgentOption(session: SessionState) {
 }
 
 /**
- * Work out which agent this turn's thread has chosen. BB sends its native
- * choice only when it changes, so it is kept for later turns. A composer pick
- * for a brand-new thread arrives as a provider option, and on the thread's
- * first turn a native choice is a stale draft from before the thread existed,
- * so the pick wins.
- */
-function resolveAgentChoice(session: SessionState, opts: RecordValue) {
-  let skipNative = session.agentSeeded === true;
-  session.agentSeeded = false;
-  const seed = stringValue(inputRecord(opts.providerOptions).agent);
-  if (seed !== undefined && session.agentChoice === undefined) {
-    session.agentChoice = seed;
-    skipNative = true;
-  }
-  const native = stringValue(inputRecord(opts.sessionOptions)[AGENT_OPTION_ID]);
-  if (!skipNative && native !== undefined) session.agentChoice = native;
-}
-
-/**
  * Bring the OpenCode session in line with this turn's BB options before
- * prompting: plugin settings, permission mode, plan mode, and model.
+ * prompting: plugin settings, permission mode, agent, and model.
  */
 export async function prepareTurn(session: SessionState, options: unknown) {
   const opts = inputRecord(options);
@@ -475,8 +448,9 @@ export async function prepareTurn(session: SessionState, options: unknown) {
     session,
     parsePermissionMode(opts.permissionMode) ?? session.permissionMode,
   );
-  resolveAgentChoice(session, opts);
-  await ensureSessionAgent(session, opts.promptMode, session.agentChoice);
+  // BB sends its native choice only when it changes, so keep it for later turns.
+  session.agentChoice = nativeAgentChoice(opts) ?? session.agentChoice;
+  await ensureSessionAgent(session, session.agentChoice);
   void publishAgentOption(session);
   await ensureSessionModel(session, turnModelRef(session, options));
 }

@@ -45,7 +45,7 @@ Inside `src/host/`:
 - `opencode-event-router.ts` translates OpenCode events into BB deltas,
   including live shell output and subagent nesting.
 - `session-manager.ts` owns session setup, per-turn preparation (settings,
-  permissions, plan mode, model), MCP registration, and shutdown.
+  permissions, agent, model), MCP registration, and shutdown.
 - `maintenance.ts` implements health, install, and update.
 - `dynamic-tools-mcp.ts` and `bridge-runtime.ts` expose BB dynamic tools to
   OpenCode and route their calls back.

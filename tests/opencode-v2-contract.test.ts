@@ -335,10 +335,14 @@ test("forwards native OpenCode skill mentions, not only BB-configured ones", () 
   ]);
 });
 
-test("offers an agent session option only when a custom primary agent exists", () => {
-  assert.equal(
-    agentSessionOption([{ id: "build" }, { id: "plan" }]),
-    undefined,
+test("offers an agent session option whenever OpenCode has a primary agent", () => {
+  assert.equal(agentSessionOption([]), undefined);
+  assert.deepEqual(
+    agentSessionOption([{ id: "build" }, { id: "plan" }])?.values,
+    [
+      { id: "build", label: "build" },
+      { id: "plan", label: "plan" },
+    ],
   );
   assert.deepEqual(
     agentSessionOption([

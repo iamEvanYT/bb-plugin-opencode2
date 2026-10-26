@@ -177,17 +177,14 @@ export function resolveModelVariant(
 
 /**
  * BB's native per-model session option for choosing OpenCode's primary agent.
- * OpenCode always has `build` and `plan`, which BB's plan mode already covers,
- * so the option only exists once there is another primary agent.
+ * It is the only way to pick `build` or `plan`, since the provider does not
+ * offer BB's own plan mode.
  */
 export function agentSessionOption(
   agents: readonly { id: string; description?: string }[],
   current?: string,
 ) {
-  if (
-    !agents.some((agent) => agent.id !== DEFAULT_AGENT && agent.id !== "plan")
-  )
-    return undefined;
+  if (agents.length === 0) return undefined;
   const ids = agents.map((agent) => agent.id);
   return {
     type: "select" as const,

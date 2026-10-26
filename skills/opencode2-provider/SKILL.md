@@ -1,6 +1,6 @@
 ---
 name: opencode2-provider
-description: "Inspect, configure, or troubleshoot the BB OpenCode v2 provider: install and version, connecting model providers, model allowlist, native subagents, permission modes, and plan mode."
+description: "Inspect, configure, or troubleshoot the BB OpenCode v2 provider: install and version, connecting model providers, model allowlist, native subagents, permission modes, and primary agents."
 ---
 
 # OpenCode v2 provider
@@ -50,14 +50,12 @@ Settings apply from the next turn.
 - Permission modes become OpenCode session rules. `accept-edits` asks for
   shell, web, and other non-edit tools; `full` allows everything. A denial is
   returned to the agent as feedback, and the turn continues.
-- `/plan` runs the turn on OpenCode's read-only `plan` agent; the next normal
-  turn switches back to the agent picked in the composer, or `build`.
-- Primary agents are a BB session option named `agent`, listed per model when
-  OpenCode has a primary agent besides `build` and `plan` (read from the
-  thread's workspace, so project-level agents count). Choose it in the
-  composer, with `bb thread spawn --option agent=<name>`, or on an existing
-  thread with `bb thread options --set agent=<name>`; it applies on the next
-  turn. `/plan` still overrides it for that turn.
+- BB's plan mode is not offered. Primary agents, `build` and `plan` included,
+  are a BB session option named `agent`, listed per model (read from the
+  thread's workspace, so project-level agents count). Choose it in the Agent
+  row of BB's model switcher, with `bb thread spawn --option agent=<name>`, or
+  on an existing thread with `bb thread options --set agent=<name>`; it applies
+  on the next turn. `plan` is OpenCode's read-only agent.
 - Reasoning levels map to the model's OpenCode variants. Models without
   variants run on their defaults whatever level is picked.
 - Not supported: thread archive, goals, service tiers, the usage dashboard,

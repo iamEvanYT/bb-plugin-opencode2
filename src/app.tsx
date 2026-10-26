@@ -1,14 +1,8 @@
 import "./app.css";
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
-import { AgentPicker } from "./app/agent-picker.tsx";
 import { SettingsSection } from "./app/settings-section.tsx";
 
 export default definePluginApp((app) => {
-  app.composer.customize({
-    id: "agent",
-    scopes: ["thread", "new-thread"],
-    actions: [{ id: "agent-picker", component: AgentPicker }],
-  });
   app.slots.settingsSection({
     id: "models",
     title: "OpenCode v2",

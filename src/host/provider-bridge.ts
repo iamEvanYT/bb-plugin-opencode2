@@ -7,7 +7,6 @@ import {
   initializeParamsSchema,
   modelListParamsSchema,
   ProviderRequestDecodeError,
-  removeCommandMentionsFromPromptInput,
   providerInstallationRunParamsSchema,
   providerInstallationStatusParamsSchema,
   providerMaintenanceParamsSchema,
@@ -102,15 +101,6 @@ const PARAM_SCHEMAS = {
   "turn/steer": turnSteerParamsSchema,
   "skills/configure": skillsConfigureParamsSchema,
 } as const;
-
-// BB plan mode arrives as `options.promptMode` and also leaves the `/plan`
-// mention in the prompt text; OpenCode's plan agent only needs the request.
-function withoutPlanCommand(input: RecordValue[]): RecordValue[] {
-  return removeCommandMentionsFromPromptInput(input as never, {
-    trigger: "/",
-    name: "plan",
-  }) as RecordValue[];
-}
 
 function providerSessionId(response: RecordValue): string {
   const id = stringValue(response.data?.id);
@@ -505,7 +495,7 @@ async function handle(request: RecordValue) {
       active.promptIds = new Set([promptId]);
       const promptPayload = {
         id: promptId,
-        ...promptBody(withoutPlanCommand(params.input), {
+        ...promptBody(params.input, {
           configuredSkillNames,
           disableSubagents: session.disableSubagents,
           nativeSkillNames: session.nativeSkillNames,
@@ -578,7 +568,7 @@ async function handle(request: RecordValue) {
             method: "POST",
             body: JSON.stringify({
               id: promptId,
-              ...promptBody(withoutPlanCommand(params.input), {
+              ...promptBody(params.input, {
                 configuredSkillNames,
                 disableSubagents: session.disableSubagents,
                 nativeSkillNames: session.nativeSkillNames,
