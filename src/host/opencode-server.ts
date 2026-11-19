@@ -887,7 +887,25 @@ export class OpenCodeServer {
     }
   }
 
+  private readonly agentListeners = new Set<(directory: string) => void>();
+
+  /**
+   * Since OpenCode 2.2.7, `/api/agent` answers with the agents loaded so far
+   * while a workspace's plugins are still loading, and sends `agent.updated`
+   * once they finish. Listeners get the workspace directory, so anything built
+   * from the agent list can be refreshed.
+   */
+  onAgentsUpdated(listener: (directory: string) => void): () => void {
+    this.agentListeners.add(listener);
+    return () => this.agentListeners.delete(listener);
+  }
+
   async handleEvent(event: RecordValue): Promise<void> {
+    if (event.type === "agent.updated") {
+      const directory = stringValue(inputRecord(event.location).directory);
+      if (directory)
+        for (const listener of this.agentListeners) listener(directory);
+    }
     await this.eventRouter.handleEvent(event);
   }
 

@@ -102,3 +102,29 @@ test("serializes MCP registry mutations without dropping persisted entries", asy
     "session-c": { serverName: "bb_c", cwd: "/c" },
   });
 });
+
+test("tells listeners which workspace's agents changed", async () => {
+  const server = new OpenCodeServer();
+  const directories: string[] = [];
+  const unsubscribe = server.onAgentsUpdated((directory: string) =>
+    directories.push(directory),
+  );
+  await server.handleEvent({
+    type: "agent.updated",
+    location: { directory: "/repo" },
+    data: {},
+  });
+  await server.handleEvent({ type: "agent.updated", data: {} });
+  await server.handleEvent({
+    type: "model.updated",
+    location: { directory: "/repo" },
+    data: {},
+  });
+  unsubscribe();
+  await server.handleEvent({
+    type: "agent.updated",
+    location: { directory: "/other" },
+    data: {},
+  });
+  assert.deepEqual(directories, ["/repo"]);
+});

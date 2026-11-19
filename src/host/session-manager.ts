@@ -1,3 +1,4 @@
+import { resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   AGENT_OPTION_ID,
@@ -430,6 +431,14 @@ export async function publishAgentOption(session: SessionState) {
       payload: { options },
     },
   ]);
+}
+
+/** Re-publish the agent option for every thread in a workspace. */
+export function refreshAgentOptions(directory: string) {
+  const workspace = resolvePath(directory);
+  for (const session of sessions.values())
+    if (resolvePath(session.cwd) === workspace)
+      void publishAgentOption(session);
 }
 
 /**

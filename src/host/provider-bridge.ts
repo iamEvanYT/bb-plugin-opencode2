@@ -57,6 +57,7 @@ import {
   ensureSessionModel,
   prepareTurn,
   publishAgentOption,
+  refreshAgentOptions,
   registerSession,
   releaseDynamicTools,
   sessionFromParams,
@@ -207,6 +208,8 @@ async function handle(request: RecordValue) {
         ? catalog.defaultId
         : models[0] && `${models[0].providerID}/${models[0].id}`;
       // Agents come from this workspace, so project-level agents show up.
+      // Ask after the model catalog: `/api/model` waits for OpenCode plugins
+      // to load, while `/api/agent` returns whatever has loaded so far.
       const agentOption = agentSessionOption(
         await openCodeServer.primaryAgents(cwd).catch(() => []),
       );
@@ -709,6 +712,9 @@ export function shutdownBridge(
   }
   return shutdownPromise;
 }
+
+// Agents from OpenCode plugins can appear after a thread published its list.
+openCodeServer.onAgentsUpdated(refreshAgentOptions);
 
 export const experimental_providerBridge = experimental_defineProviderBridge({
   handleLine,
