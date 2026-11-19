@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  apiErrorMessage,
   approvalPermissionReply,
   assertModelEnabled,
   automaticPermissionReply,
@@ -396,4 +397,26 @@ test("confirms steered input so BB clears Steer pending", () => {
     clientRequestId: "client_1",
     providerTurnId: "turn_1",
   });
+});
+
+test("shows OpenCode's error message instead of the raw JSON body", () => {
+  assert.equal(
+    apiErrorMessage(
+      404,
+      '{"_tag":"SessionNotFoundError","sessionID":"ses_1","message":"Session not found: ses_1"}',
+    ),
+    "OpenCode API 404: Session not found: ses_1",
+  );
+  assert.equal(
+    apiErrorMessage(
+      500,
+      '{"_tag":"UnknownError","message":"Storage is full","ref":"err_7"}',
+    ),
+    "OpenCode API 500: Storage is full (server log ref err_7)",
+  );
+  assert.equal(
+    apiErrorMessage(502, "Bad Gateway"),
+    "OpenCode API 502: Bad Gateway",
+  );
+  assert.equal(apiErrorMessage(500, ""), "OpenCode API 500");
 });

@@ -11,6 +11,7 @@ import {
 import type { ModelSettings } from "../settings-contract.ts";
 import { modelCatalogEntry, type ModelCatalogEntry } from "./models.ts";
 import {
+  apiErrorMessage,
   forkBoundaryRetainingThrough,
   locationQuery,
   revertTargetRetainingThrough,
@@ -451,9 +452,7 @@ export class OpenCodeServer {
       signal: init.signal ?? AbortSignal.timeout(30_000),
     });
     if (!response.ok)
-      throw new Error(
-        `OpenCode API ${response.status}: ${await response.text()}`,
-      );
+      throw new Error(apiErrorMessage(response.status, await response.text()));
     if (response.status === 204) return {};
     return inputRecord(await response.json());
   }

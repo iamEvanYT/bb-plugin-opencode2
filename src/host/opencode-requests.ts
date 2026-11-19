@@ -6,7 +6,7 @@ import {
   sanitizeInheritedChildProcessEnv,
   withoutBridgeRuntimeEnv,
 } from "@get-bb/plugin-sdk/provider-bridge";
-import type { OpenCodeRecord } from "./types.ts";
+import { inputRecord, stringValue, type OpenCodeRecord } from "./types.ts";
 
 type RecordValue = OpenCodeRecord;
 
@@ -348,4 +348,24 @@ export function nativeSkillRoots(
     origin,
     shape: "skills" as const,
   }));
+}
+
+/**
+ * OpenCode answers a failed request with a tagged JSON error such as
+ * `{_tag: "SessionNotFoundError", message}`. Since 2.3.1 a server crash is
+ * `{_tag: "UnknownError", message, ref}`, where `ref` locates the entry in the
+ * OpenCode server log. Show the message instead of the raw body; the status
+ * stays first, since callers retry on 409.
+ */
+export function apiErrorMessage(status: number, body: string): string {
+  let detail = body.trim();
+  try {
+    const error = inputRecord(JSON.parse(body));
+    const message = stringValue(error.message);
+    const ref = stringValue(error.ref);
+    if (message) detail = ref ? `${message} (server log ref ${ref})` : message;
+  } catch {
+    // Not JSON: keep the body as it is.
+  }
+  return `OpenCode API ${status}${detail ? `: ${detail}` : ""}`;
 }

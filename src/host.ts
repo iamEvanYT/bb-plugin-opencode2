@@ -52,6 +52,7 @@ export {
   formReply,
 } from "./host/opencode-interactions.ts";
 export {
+  apiErrorMessage,
   dynamicMcpRegistrationRequest,
   dynamicMcpRemovalRequest,
   forkBoundaryRetainingThrough,
