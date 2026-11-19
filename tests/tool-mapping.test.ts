@@ -372,6 +372,24 @@ test("retains through a checkpoint by acting on the following turn", () => {
   assert.equal(revertTargetRetainingThrough(turnMessages, "msg_u2"), undefined);
 });
 
+test("treats a background report that woke an idle session as its own turn", () => {
+  const messages = [
+    { id: "msg_u1", type: "user" },
+    { id: "msg_a1", type: "assistant" },
+    // Delivered mid-turn: part of the user's turn.
+    { id: "msg_s1", type: "synthetic" },
+    { id: "msg_a2", type: "assistant" },
+    { id: "msg_i1", type: "idle" },
+    // Woke the idle session: a turn of its own.
+    { id: "msg_s2", type: "synthetic" },
+    { id: "msg_a3", type: "assistant" },
+    { id: "msg_i2", type: "idle" },
+  ];
+  assert.equal(nextMessageIdAfterCheckpoint(messages, "msg_u1"), "msg_s2");
+  assert.equal(revertTargetRetainingThrough(messages, "msg_u1"), "msg_s2");
+  assert.equal(revertTargetRetainingThrough(messages, "msg_s2"), undefined);
+});
+
 test("confirms steered input so BB clears Steer pending", () => {
   assert.deepEqual(steerAcceptedDelta("client_1", "turn_1"), {
     kind: "input.accepted",

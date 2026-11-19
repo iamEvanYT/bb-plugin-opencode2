@@ -44,6 +44,8 @@ Inside `src/host/`:
   catalog, persistence, event stream, and turn reconciliation.
 - `opencode-event-router.ts` translates OpenCode events into BB deltas,
   including live shell output and subagent nesting.
+- `background-work.ts` maps shells and subagents that outlive their turn to
+  BB background rows, and reads OpenCode's reports about them.
 - `session-manager.ts` owns session setup, per-turn preparation (settings,
   permissions, agent, model), MCP registration, and shutdown.
 - `maintenance.ts` implements health, install, and update.
@@ -73,6 +75,13 @@ Inside `src/host/`:
 - **Terminal execution events wait for this turn's `session.inbox.delivered`.**
   Earlier work finishing must not end a new turn (this broke the turn after
   `/compact`).
+- **Background work gets thread-scoped rows and its own turns.** A shell past
+  its timeout, and every native subagent, keeps running after its tool call
+  returns. The shell becomes a BB background task; the subagent's delegation
+  row stays open. OpenCode's synthetic report settles the row, and when that
+  report wakes an idle session, the bridge opens a provider turn for the
+  reply. A subagent's work after its spawning turn ended shows only as the
+  delegation's final summary.
 - **Turn diffs are built from the turn's own patches**, because
   `/api/session/:id/diff` stays empty without snapshots.
 

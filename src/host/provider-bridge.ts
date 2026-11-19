@@ -25,7 +25,6 @@ import {
 import {
   emit,
   handleRuntimeResponse,
-  nextBridgeSequence,
   notify,
   rejectPendingRuntimeRequests,
   sendError,
@@ -70,12 +69,12 @@ import {
   manualCompactionStartDeltas,
 } from "./timeline.ts";
 import {
+  createActiveTurn,
   errorMessage,
   inputRecord,
   sessions,
   sessionsByProviderId,
   stringValue,
-  type ActiveTurn,
   type OpenCodeRecord,
   type SessionState,
 } from "./types.ts";
@@ -425,17 +424,7 @@ async function handle(request: RecordValue) {
       const session = sessions.get(params.threadId);
       if (!session) throw new Error("No active OpenCode session");
       if (session.active) throw new Error("An OpenCode turn is already active");
-      const active: ActiveTurn = {
-        providerTurnId: `turn_${Date.now()}_${nextBridgeSequence()}`,
-        startedAt: Date.now(),
-        abortController: new AbortController(),
-        opened: new Map<string, RecordValue>(),
-        pendingTools: new Map<string, string>(),
-        pendingInput: new Map<string, string>(),
-        touchedFiles: new Map<string, string[]>(),
-        openQuestions: new Map<string, string>(),
-        settledTools: new Set<string>(),
-      };
+      const active = createActiveTurn();
       session.active = active;
       if (isManualCompactionTurn(params.input)) {
         const messageId = `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -541,17 +530,7 @@ async function handle(request: RecordValue) {
       let active = session.active;
       const openedTurn = !active;
       if (!active) {
-        active = {
-          providerTurnId: `turn_${Date.now()}_${nextBridgeSequence()}`,
-          startedAt: Date.now(),
-          abortController: new AbortController(),
-          opened: new Map<string, RecordValue>(),
-          pendingTools: new Map<string, string>(),
-          pendingInput: new Map<string, string>(),
-          touchedFiles: new Map<string, string[]>(),
-          openQuestions: new Map<string, string>(),
-          settledTools: new Set<string>(),
-        };
+        active = createActiveTurn();
         session.active = active;
         emit(session.bbThreadId, [
           { kind: "turn.open", providerTurnId: active.providerTurnId },

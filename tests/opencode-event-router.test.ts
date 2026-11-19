@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { experimental_createDeltaAssembler as createDeltaAssembler } from "@get-bb/plugin-sdk/provider-bridge/testing";
 import { OpenCodeEventRouter } from "./support/host-api.js";
-import type { OpenCodeRecord, SessionState } from "../src/host/types.ts";
+import type {
+  ActiveTurn,
+  OpenCodeRecord,
+  SessionState,
+} from "../src/host/types.ts";
 
 test("translates current OpenCode v2 text, reasoning, tool, and terminal events", async () => {
   const emitted: OpenCodeRecord[] = [];
@@ -488,4 +493,281 @@ test("a failed permission reply never escapes as an unhandled rejection", async 
   }
   assert.equal(replied, true);
   assert.deepEqual(unhandled, []);
+});
+
+function routerHarness(providerThreadId: string) {
+  const emitted: OpenCodeRecord[] = [];
+  const session: SessionState = {
+    bbThreadId: "bb-thread",
+    providerThreadId,
+    cwd: process.cwd(),
+    disableSubagents: false,
+    dynamicTools: [],
+    disallowedTools: new Set(),
+    enabledModels: null,
+    instructions: "",
+    bridgeEnvVars: {},
+    dynamicToolScope: {},
+    active: {
+      providerTurnId: "turn-1",
+      startedAt: Date.now(),
+      abortController: new AbortController(),
+      opened: new Map(),
+      pendingTools: new Map(),
+      pendingInput: new Map(),
+      touchedFiles: new Map(),
+      openQuestions: new Map(),
+      settledTools: new Set(),
+    },
+    usage: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+  };
+  const router = new OpenCodeEventRouter(
+    async () => ({}),
+    (_threadId, deltas) => emitted.push(...deltas),
+    new Map([[providerThreadId, session]]),
+  );
+  const event = (
+    type: string,
+    data: OpenCodeRecord,
+    sessionID = providerThreadId,
+  ) => router.handleEvent({ type, data: { sessionID, ...data } });
+  const report = (inboxID: string, text: string, metadata: OpenCodeRecord) =>
+    event("session.inbox.enqueued", {
+      inboxID,
+      item: {
+        type: "synthetic",
+        delivery: "steer",
+        payload: { text, metadata },
+      },
+    });
+  return { emitted, session, router, event, report };
+}
+
+test("keeps a backgrounded shell as a task and opens a turn when it reports back", async () => {
+  const { emitted, session, event, report } = routerHarness("ses_shell");
+
+  await event("session.tool.input.started", { id: "call_sh", name: "shell" });
+  await event("session.tool.called", {
+    id: "call_sh",
+    input: { command: "make test", timeout: 5000 },
+  });
+  await event("session.tool.success", {
+    id: "call_sh",
+    content: [
+      {
+        type: "text",
+        text: "Command moved to the background (shell ID: sh_1).\nPID: 42\nOutput is streaming to: /tmp/sh_1.out\n",
+      },
+    ],
+    metadata: { status: "running", shellID: "sh_1", pid: 42 },
+  });
+
+  const commandClose = emitted.find(
+    (delta) => delta.kind === "item.close" && delta.item.type === "command",
+  );
+  assert.equal(commandClose?.status, "completed");
+  assert.equal(commandClose?.item.exitCode, undefined);
+  const taskOpen = emitted.find(
+    (delta) =>
+      delta.kind === "item.open" && delta.item.type === "backgroundTask",
+  );
+  assert.deepEqual(taskOpen?.key, { providerItemId: "sh_1" });
+  assert.equal(taskOpen?.providerTurnId, "turn-1");
+  assert.equal(taskOpen?.item.taskType, "local_bash");
+  assert.equal(taskOpen?.item.taskStatus, "running");
+  assert.equal(taskOpen?.item.description, "make test");
+  assert.equal(taskOpen?.item.outputFile, "/tmp/sh_1.out");
+
+  // The turn ends while the shell keeps running; its row stays open.
+  await event("session.execution.succeeded", {});
+  assert.equal(session.active, undefined);
+  const taskClosed = () =>
+    emitted.find(
+      (delta) =>
+        delta.kind === "item.close" && delta.item.type === "backgroundTask",
+    );
+  assert.equal(taskClosed(), undefined);
+
+  await report(
+    "msg_report",
+    '<shell id="sh_1" state="completed" command="make test >&2">\nboom\n\nExit code: 3\n</shell>',
+    {
+      source: "shell",
+      shellID: "sh_1",
+      jobID: "sh_1",
+      state: "completed",
+      exit: 3,
+    },
+  );
+  assert.equal(taskClosed()?.status, "failed");
+  assert.equal(taskClosed()?.item.taskStatus, "failed");
+  assert.equal(taskClosed()?.item.summary, "boom\n\nExit code: 3");
+  assert.equal(taskClosed()?.item.error, "Exited with code 3");
+  assert.equal(taskClosed()?.providerTurnId, undefined);
+
+  // The report woke the idle session: OpenCode's reply gets its own turn.
+  // Re-read: the assertion above narrowed `active` to undefined.
+  const providerTurn = session.active as ActiveTurn | undefined;
+  assert.ok(providerTurn);
+  assert.equal(providerTurn.checkpointId, "msg_report");
+  assert.ok(
+    emitted.some(
+      (delta) =>
+        delta.kind === "turn.open" &&
+        delta.providerTurnId === providerTurn.providerTurnId,
+    ),
+  );
+  await event("session.execution.started", {});
+  await event("session.inbox.delivered", { inboxID: "msg_report" });
+  await event("session.text.started", { assistantMessageID: "m2", ordinal: 0 });
+  await event("session.text.ended", {
+    assistantMessageID: "m2",
+    ordinal: 0,
+    text: "The tests failed.",
+  });
+  await event("session.execution.succeeded", {});
+  assert.equal(session.active, undefined);
+  const boundary = emitted.at(-1);
+  assert.equal(boundary?.kind, "turn.boundary");
+  assert.equal(boundary?.providerTurnId, providerTurn.providerTurnId);
+  assert.equal(boundary?.providerCheckpointId, "msg_report");
+});
+
+test("keeps a background subagent's delegation open until its final report", async () => {
+  const { emitted, session, router, event, report } =
+    routerHarness("ses_parent");
+
+  await event("session.tool.input.started", {
+    id: "call_sub",
+    name: "subagent",
+  });
+  await event("session.tool.called", {
+    id: "call_sub",
+    input: { agent: "explore", description: "List files", prompt: "ls" },
+  });
+  await event("session.tool.progress", {
+    id: "call_sub",
+    metadata: { sessionID: "ses_child", status: "running" },
+  });
+  await event("session.tool.success", {
+    id: "call_sub",
+    content: [
+      { type: "text", text: "The subagent is working in the background." },
+    ],
+    metadata: { sessionID: "ses_child", status: "running" },
+  });
+  const delegationOpen = emitted.find(
+    (delta) => delta.kind === "item.open" && delta.item.type === "delegation",
+  );
+  assert.equal(delegationOpen?.item.background, true);
+
+  router.finish(session, "completed");
+  const delegationClosed = () =>
+    emitted.find(
+      (delta) =>
+        delta.kind === "item.close" && delta.item.type === "delegation",
+    );
+  assert.equal(delegationClosed(), undefined);
+
+  // The child's work after the spawning turn ended is not shown.
+  const count = emitted.length;
+  await event(
+    "session.text.started",
+    { assistantMessageID: "child", ordinal: 0 },
+    "ses_child",
+  );
+  assert.equal(emitted.length, count);
+
+  // An idle report with the child's own work outstanding is not final.
+  await report(
+    "msg_partial",
+    '<subagent sessionID="ses_child" state="running">\nStill going.\n</subagent>',
+    { source: "subagent", childID: "ses_child", state: "running" },
+  );
+  assert.equal(delegationClosed(), undefined);
+  router.finish(session, "completed");
+
+  await report(
+    "msg_final",
+    '<subagent sessionID="ses_child" state="completed" description="List files">\na.txt\n</subagent>',
+    { source: "subagent", childID: "ses_child", state: "completed" },
+  );
+  assert.equal(delegationClosed()?.status, "completed");
+  assert.equal(delegationClosed()?.item.summary, "a.txt");
+  assert.equal(delegationClosed()?.item.childRef, "ses_child");
+  assert.deepEqual(delegationClosed()?.key, {
+    providerItemId: "call_sub",
+    channel: "tool",
+  });
+});
+
+test("BB settles background rows after their turn and records the wake as a new turn", async () => {
+  const { emitted, event, report } = routerHarness("ses_bb");
+  emitted.push({ kind: "turn.open", providerTurnId: "turn-1" });
+
+  await event("session.tool.input.started", { id: "call_sh", name: "shell" });
+  await event("session.tool.called", {
+    id: "call_sh",
+    input: { command: "make test" },
+  });
+  await event("session.tool.success", {
+    id: "call_sh",
+    content: [{ type: "text", text: "Command moved to the background." }],
+    metadata: { status: "running", shellID: "sh_1" },
+  });
+  await event("session.execution.succeeded", {});
+  await report("msg_report", '<shell id="sh_1">ok</shell>', {
+    source: "shell",
+    shellID: "sh_1",
+    state: "completed",
+    exit: 0,
+  });
+  await event("session.inbox.delivered", { inboxID: "msg_report" });
+  await event("session.execution.succeeded", {});
+
+  const events = createDeltaAssembler({ providerId: "opencode2" }).assemble({
+    threadId: "bb-thread",
+    deltas: emitted as never,
+  }) as OpenCodeRecord[];
+  const types = events.map((entry) => entry.type);
+  assert.equal(types.filter((type) => type === "turn/started").length, 2);
+  assert.equal(types.filter((type) => type === "turn/completed").length, 2);
+  const settled = events.find(
+    (entry) => entry.type === "item/backgroundTask/completed",
+  );
+  assert.equal(settled?.scope.kind, "thread");
+  assert.equal(settled?.item.taskStatus, "completed");
+  assert.equal(settled?.item.summary, "ok");
+  // The task settles after the first turn completed and before the wake.
+  assert.ok(types.indexOf("turn/completed") < events.indexOf(settled!));
+  assert.ok(events.indexOf(settled!) < types.lastIndexOf("turn/started"));
+});
+
+test("opens provider turns only for prompts and reports, and closes withdrawn ones", async () => {
+  const { emitted, session, router, event } = routerHarness("ses_idle");
+  router.finish(session, "completed");
+  const turnOpens = () =>
+    emitted.filter((delta) => delta.kind === "turn.open").length;
+
+  await event("session.inbox.enqueued", {
+    inboxID: "msg_compact",
+    item: { type: "compaction", delivery: "steer", payload: {} },
+  });
+  assert.equal(session.active, undefined);
+  assert.equal(turnOpens(), 0);
+
+  // A prompt from another OpenCode client runs the model, so it gets a turn.
+  await event("session.inbox.enqueued", {
+    inboxID: "msg_other",
+    item: { type: "user", delivery: "queue", payload: { text: "hi" } },
+  });
+  assert.ok(session.active);
+  assert.equal(turnOpens(), 1);
+
+  await event("session.inbox.cancelled", { inboxID: "msg_other" });
+  assert.equal(session.active, undefined);
+  const boundary = emitted.at(-1);
+  assert.equal(boundary?.kind, "turn.boundary");
+  assert.equal(boundary?.status, "interrupted");
+  assert.equal(boundary?.providerCheckpointId, undefined);
 });

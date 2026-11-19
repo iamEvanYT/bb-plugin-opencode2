@@ -263,6 +263,9 @@ export async function registerSession(session: SessionState) {
       : undefined;
   if (previous) {
     previous.active?.abortController.abort();
+    // Shells and subagents keep running across a resume of the same session.
+    if (previous.providerThreadId === session.providerThreadId)
+      session.backgroundJobs ??= previous.backgroundJobs;
     if (reusableProxy) {
       // Same OpenCode session and tool catalog: keep the live MCP child
       // instead of re-registering (which respawns it per message). Settle

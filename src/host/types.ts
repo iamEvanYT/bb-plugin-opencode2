@@ -49,6 +49,35 @@ export type ActiveTurn = {
   lastStepTokens?: OpenCodeRecord;
 };
 
+let turnSequence = 0;
+
+/** A fresh turn record. `providerTurnId` is unique within this worker. */
+export function createActiveTurn(): ActiveTurn {
+  turnSequence += 1;
+  return {
+    providerTurnId: `turn_${Date.now()}_${turnSequence}`,
+    startedAt: Date.now(),
+    abortController: new AbortController(),
+    opened: new Map(),
+    pendingTools: new Map(),
+    pendingInput: new Map(),
+    touchedFiles: new Map(),
+    openQuestions: new Map(),
+    settledTools: new Set(),
+  };
+}
+
+/**
+ * OpenCode work that outlives the turn that started it: a shell moved to the
+ * background or a native subagent. Its BB row stays open until OpenCode's
+ * report settles it.
+ */
+export type BackgroundJob = {
+  key: { providerItemId: string; channel?: string };
+  item: OpenCodeRecord;
+  presentation?: OpenCodeRecord;
+};
+
 export type SessionState = {
   bbThreadId: string;
   providerThreadId: string;
@@ -66,6 +95,8 @@ export type SessionState = {
   dynamicToolScope: object;
   dynamicToolProxy?: DynamicToolsMcpProxy;
   active?: ActiveTurn;
+  /** Background jobs by OpenCode job ID (shell ID or child session ID). */
+  backgroundJobs?: Map<string, BackgroundJob>;
   model?: ModelRef;
   /** The current model's context limit, from OpenCode's model catalog. */
   contextWindow?: number | null;

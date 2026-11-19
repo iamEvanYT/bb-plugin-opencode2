@@ -246,6 +246,18 @@ function messageIdList(
   );
 }
 
+/**
+ * A user prompt starts a turn. So does a synthetic message (a background
+ * shell's or subagent's report) that woke an idle session; one delivered while
+ * the session was busy joined the turn already running.
+ */
+function startsTurn(types: readonly (string | undefined)[], index: number) {
+  return (
+    types[index] === "user" ||
+    (types[index] === "synthetic" && types[index - 1] === "idle")
+  );
+}
+
 export function nextMessageIdAfterCheckpoint(
   messages: readonly CheckpointMessage[] | readonly string[],
   checkpointId: string,
@@ -259,11 +271,11 @@ export function nextMessageIdAfterCheckpoint(
       : undefined;
   const index = ids.indexOf(checkpointId);
   if (index === -1) return undefined;
-  // When types are known and the checkpoint is a user message, skip to the
-  // next user message so the retained turn keeps its assistant reply.
+  // When types are known, skip to the next message that starts a turn so the
+  // retained turn keeps its assistant reply.
   if (types) {
     for (let i = index + 1; i < ids.length; i++) {
-      if (types[i] === "user") return ids[i];
+      if (startsTurn(types, i)) return ids[i];
     }
     return undefined;
   }

@@ -373,6 +373,8 @@ export function toolRow(name: string, rawInput: unknown, cwd: string) {
   if (isSubagentTool(name)) {
     // Rendered as BB's native delegation row. The router fills in the child
     // session once OpenCode reports it; until then the call ID stands in.
+    // Subagents always run in the background since OpenCode 2.3, so the row
+    // is thread-scoped and can settle after the turn that spawned it.
     const agent = firstInputString(input, ["agent", "subagent_type"]);
     const description = firstInputString(input, [
       "description",
@@ -386,7 +388,7 @@ export function toolRow(name: string, rawInput: unknown, cwd: string) {
         label:
           [agent, description].filter(Boolean).join(": ") ||
           "OpenCode subagent",
-        background: false,
+        background: true,
       },
     };
   }

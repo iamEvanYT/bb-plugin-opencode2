@@ -109,10 +109,6 @@ export function handleRuntimeResponse(input: OpenCodeRecord): boolean {
   return true;
 }
 
-export function nextBridgeSequence(): number {
-  return nextRuntimeRequestId;
-}
-
 export function rejectPendingRuntimeRequests(reason: string): void {
   const response = { error: { message: reason } };
   for (const resolve of pendingRuntimeRequests.values()) resolve(response);

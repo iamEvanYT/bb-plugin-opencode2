@@ -1,4 +1,14 @@
 import { experimental_COMPACTION_PRESENTATION as compactionPresentation } from "@get-bb/plugin-sdk/provider-bridge";
+import {
+  backgroundReport,
+  backgroundShellJob,
+  backgroundSubagentJob,
+  movedToBackground,
+  openBackgroundJobDelta,
+  reportTaskStatus,
+  settleBackgroundJobDelta,
+  unwrapReport,
+} from "./background-work.ts";
 import { dynamicToolCallRouter, emit } from "./bridge-runtime.ts";
 import { OpenCodeInteractions } from "./opencode-interactions.ts";
 import { toolFailureError } from "./prompt.ts";
@@ -21,6 +31,7 @@ import {
   workspacePath,
 } from "./tool-mapping.ts";
 import {
+  createActiveTurn,
   inputRecord,
   parseInputText,
   sessionsByProviderId,
@@ -153,23 +164,19 @@ function retryErrorCategory(error: RecordValue) {
 const CHILD_EVENT_PATTERN =
   /^(permission\.asked|session\.(text|reasoning|tool)\.)/;
 
-/** The subagent's final report, without OpenCode's wrapper tag. */
-export function subagentSummary(text: string): string {
-  return text
-    .replace(/^\s*<subagent\b[^>]*>\s*/, "")
-    .replace(/\s*<\/subagent>\s*$/, "")
-    .trim();
-}
-
 export class OpenCodeEventRouter {
   private readonly interactions: OpenCodeInteractions;
   private readonly emitTimeline: typeof emit;
   private readonly sessionLookup: ReadonlyMap<string, SessionState>;
   private readonly request: RequestOpenCode;
-  /** Native subagent sessions, routed into their parent BB turn. */
+  /**
+   * Native subagent sessions by child session ID, until the parent turn that
+   * spawned them ends. A background subagent working past that turn is shown
+   * only through its delegation row's final report.
+   */
   private readonly childSessions = new Map<
     string,
-    { parent: SessionState; callId: string }
+    { parentId: string; callId: string }
   >();
   /** Provider item ID -> the delegation call it is nested under. */
   private readonly parentRefs = new Map<string, string>();
@@ -223,9 +230,11 @@ export class OpenCodeEventRouter {
     // A subagent's own lifecycle, usage, and compaction belong to the child
     // session; only its visible work joins the parent turn.
     if (!child || !CHILD_EVENT_PATTERN.test(type)) return;
+    const parent = this.sessionLookup.get(child.parentId);
+    if (!parent) return;
     this.childParentRef = child.callId;
     try {
-      await this.handleSessionEvent(child.parent, event, data);
+      await this.handleSessionEvent(parent, event, data);
     } finally {
       this.childParentRef = undefined;
     }
@@ -236,11 +245,20 @@ export class OpenCodeEventRouter {
     event: RecordValue,
     data: RecordValue,
   ): Promise<void> {
-    const active = session.active;
     if (event.type === "permission.asked") {
       void this.interactions.handlePermission(session, data);
       return;
     }
+    if (event.type === "session.inbox.enqueued") {
+      this.settleBackgroundJob(session, data.item);
+      // Prompts and reports get a reply worth a turn. Compaction and session
+      // moves are housekeeping.
+      const kind = inputRecord(data.item).type;
+      if (!session.active && (kind === "user" || kind === "synthetic"))
+        this.openProviderTurn(session, stringValue(data.inboxID));
+      return;
+    }
+    const active = session.active;
     if (!active) return;
     const eventId = stringValue(data.id) ?? "";
     const eventType = stringValue(event.type) ?? "";
@@ -419,7 +437,10 @@ export class OpenCodeEventRouter {
       const opened = active.opened.get(eventId);
       if (childId && opened?.type === "delegation") {
         opened.childRef = childId;
-        this.childSessions.set(childId, { parent: session, callId: eventId });
+        this.childSessions.set(childId, {
+          parentId: session.providerThreadId,
+          callId: eventId,
+        });
       }
       const shellId = stringValue(inputRecord(data.metadata).shellID);
       if (shellId && active.opened.get(eventId)?.type === "command")
@@ -470,10 +491,19 @@ export class OpenCodeEventRouter {
         ]);
       }
       const output = contentText(data.content);
+      if (
+        event.type === "session.tool.success" &&
+        movedToBackground(data) &&
+        this.moveToBackground(session, active, eventId, item, output, data)
+      ) {
+        active.touchedFiles.delete(eventId);
+        active.pendingInput.delete(eventId);
+        return;
+      }
       if (item.type === "delegation") {
         item.summary =
           event.type === "session.tool.success"
-            ? subagentSummary(output)
+            ? unwrapReport(output)
             : toolFailureError(
                 name,
                 session.disableSubagents,
@@ -572,6 +602,18 @@ export class OpenCodeEventRouter {
       active.promptIds?.has(stringValue(data.inboxID) ?? "")
     )
       active.inputDelivered = true;
+    // Nothing will run for a turn whose every prompt was withdrawn, and the
+    // withdrawn message is no checkpoint to rewind to.
+    if (
+      event.type === "session.inbox.cancelled" &&
+      !active.inputDelivered &&
+      active.promptIds?.delete(stringValue(data.inboxID) ?? "") &&
+      active.promptIds.size === 0
+    ) {
+      active.checkpointId = undefined;
+      this.finish(session, "interrupted");
+      return;
+    }
     if (
       eventType.startsWith("session.execution.") &&
       active.promptIds?.size &&
@@ -763,6 +805,89 @@ export class OpenCodeEventRouter {
     active.shellPolls?.delete(callId);
   }
 
+  /**
+   * The call returned while its work keeps running (see background-work.ts).
+   * Track the work so its row stays open past this turn. Returns false for a
+   * call BB cannot follow, which then closes like any other.
+   */
+  private moveToBackground(
+    session: SessionState,
+    active: ActiveTurn,
+    callId: string,
+    item: RecordValue,
+    output: string,
+    data: RecordValue,
+  ): boolean {
+    // A subagent's own background work reports to the subagent.
+    if (this.childParentRef) return false;
+    const metadata = inputRecord(data.metadata);
+    const jobId = stringValue(
+      item.type === "delegation" ? metadata.sessionID : metadata.shellID,
+    );
+    if (!jobId) return false;
+    if (item.type === "delegation") {
+      item.childRef = jobId;
+      (session.backgroundJobs ??= new Map()).set(
+        jobId,
+        backgroundSubagentJob(callId, item),
+      );
+    } else if (item.type === "command") {
+      // The call itself is done; the shell lives on as a background task.
+      item.aggregatedOutput = output;
+      const job = backgroundShellJob(
+        jobId,
+        stringValue(item.command) ?? "",
+        output,
+      );
+      (session.backgroundJobs ??= new Map()).set(jobId, job);
+      this.emit(session.bbThreadId, [
+        {
+          kind: "item.close",
+          key: itemKey(callId, "tool"),
+          status: "completed",
+          item,
+          providerTurnId: active.providerTurnId,
+        },
+        openBackgroundJobDelta(job, active.providerTurnId),
+      ]);
+    } else {
+      return false;
+    }
+    active.opened.delete(callId);
+    return true;
+  }
+
+  /** Closes a background job's row when OpenCode reports it finished. */
+  private settleBackgroundJob(session: SessionState, inboxItem: unknown) {
+    const report = backgroundReport(inboxItem);
+    const job = report && session.backgroundJobs?.get(report.jobId);
+    if (!report || !job) return;
+    const taskStatus = reportTaskStatus(report);
+    if (!taskStatus) return;
+    session.backgroundJobs?.delete(report.jobId);
+    this.emit(session.bbThreadId, [
+      settleBackgroundJobDelta(job, report, taskStatus),
+    ]);
+  }
+
+  /**
+   * OpenCode started work no BB turn asked for: a background job's report
+   * woke the idle session, or another client prompted it. Open a turn so the
+   * work shows up. It ends like any other, on the execution's terminal event.
+   */
+  private openProviderTurn(session: SessionState, inboxId?: string) {
+    const active = createActiveTurn();
+    active.promptDelivered = true;
+    if (inboxId) {
+      active.promptIds = new Set([inboxId]);
+      active.checkpointId = inboxId;
+    }
+    session.active = active;
+    this.emit(session.bbThreadId, [
+      { kind: "turn.open", providerTurnId: active.providerTurnId },
+    ]);
+  }
+
   private async emitFileChanges(
     session: SessionState,
     active: ActiveTurn,
@@ -836,7 +961,8 @@ export class OpenCodeEventRouter {
       return;
     }
     for (const [childId, child] of this.childSessions)
-      if (child.parent === session) this.childSessions.delete(childId);
+      if (child.parentId === session.providerThreadId)
+        this.childSessions.delete(childId);
     for (const poll of active.shellPolls?.values() ?? []) poll.stopped = true;
     active.shellPolls?.clear();
     dynamicToolCallRouter.resolve(
