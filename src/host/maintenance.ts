@@ -18,7 +18,7 @@ import { errorMessage } from "./types.ts";
 export const OPENCODE_EXECUTABLE = "opencode2";
 export const OPENCODE_NPM_PACKAGE = "@opencode/cli";
 /** The oldest OpenCode whose API this bridge was verified against. */
-export const MIN_OPENCODE_VERSION = "2.0.26";
+export const MIN_OPENCODE_VERSION = "2.3.1";
 export const OPENCODE_LOGIN_COMMAND = "opencode2 auth login";
 
 const LATEST_VERSION_TTL_MS = 60 * 60 * 1000;

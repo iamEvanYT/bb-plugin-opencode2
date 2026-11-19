@@ -36,7 +36,8 @@ the plugin settings page or `saveSettings` with the full object:
   `provider/model` IDs (`[]` hides all).
 - `disableSubagents` (default `true`): when `true`, OpenCode's native
   `subagent` tool is denied and hidden; delegate with BB threads instead.
-  When `false`, OpenCode subagents render as BB delegation rows.
+  When `false`, OpenCode subagents run in the background and render as BB
+  delegation rows that settle with the subagent's report.
 - `hideBbToolsOutsideBb` (default `true`): keeps one
   `bb_opencode2_*` deny rule at the end of `permissions` in the host's global
   OpenCode config, so OpenCode's own sessions don't list BB threads' tools.

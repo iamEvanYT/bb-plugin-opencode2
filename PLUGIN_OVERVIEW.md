@@ -22,7 +22,7 @@ patches.
 
 ## Requirements
 
-- OpenCode v2 2.0.26 or newer, with `opencode2` on the host's `PATH`. BB can
+- OpenCode v2 2.3.1 or newer, with `opencode2` on the host's `PATH`. BB can
   install and update it from the provider settings.
 - At least one model provider connected in OpenCode (`opencode2 auth login`).
   OpenCode owns model credentials; BB never stores them.

@@ -3,6 +3,26 @@
 All notable changes to this plugin are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Background work from OpenCode 2.3: a shell still running at its timeout
+  becomes a BB background task, and native subagents are background delegation
+  rows that settle with their report. When a report wakes an idle session,
+  OpenCode's reply shows up as a new turn instead of being dropped.
+- OpenCode questions with up to 10 prompts, and optional fields that can be
+  skipped.
+
+### Changed
+
+- OpenCode v2.3.1 or newer is required, and BB must provide Plugin SDK 0.6.99
+  or newer. Dependencies are updated to Plugin SDK 0.6.157.
+- The `agent` option refreshes when OpenCode plugins finish loading their
+  agents.
+- OpenCode API errors show OpenCode's message (and server log ref) instead of
+  the raw JSON body.
+
 ## [1.2.0] - 2026-10-26
 
 ### Changed
@@ -65,6 +85,7 @@ First release: BB threads that run on an installed OpenCode v2 server.
 - Compatibility with OpenCode v2.0.27 API changes.
 - BB tools not reaching OpenCode under the desktop app, and cold model lists.
 
+[Unreleased]: https://github.com/iamEvanYT/bb-plugin-opencode2/compare/v1.2.0...HEAD
 [1.2.0]: https://github.com/iamEvanYT/bb-plugin-opencode2/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/iamEvanYT/bb-plugin-opencode2/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/iamEvanYT/bb-plugin-opencode2/releases/tag/v1.0.0

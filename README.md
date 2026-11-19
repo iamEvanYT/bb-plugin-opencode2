@@ -5,12 +5,12 @@ A [BB](https://getbb.app) plugin that runs BB threads through an installed
 connection, model credentials, and its own tool execution. The plugin translates
 between OpenCode's v2 API and events and BB's provider bridge protocol.
 
-Verified against OpenCode 2.0.26–2.0.27 and BB 0.46 (Plugin SDK 0.6.37).
+Verified against OpenCode 2.3.2 and BB 0.49 (Plugin SDK 0.6.157).
 
 ## Requirements
 
-- BB 0.41 or newer (developed and verified on 0.46)
-- OpenCode v2 2.0.26 or newer (`opencode2` on the host's `PATH`). BB can
+- BB with Plugin SDK 0.6.99 or newer (verified on BB 0.49)
+- OpenCode v2 2.3.1 or newer (`opencode2` on the host's `PATH`). BB can
   install it (`npm install -g @opencode/cli`) or update it
   (`opencode2 upgrade`) from the provider settings.
 - At least one model provider connected in OpenCode: `opencode2 auth login`
@@ -44,12 +44,13 @@ the provider is enabled in the plugin settings.
 | Manual `/compact`      | Runs OpenCode compaction; automatic compactions also appear in the timeline.                                                                                                                                                                                        |
 | Agents                 | Models list an `agent` option with every OpenCode primary agent, `build` and `plan` included. Pick it in the Agent row of BB's model switcher, or run `bb thread spawn --option agent=<name>`. Project-level agents show up too. BB's own plan mode is not offered. |
 | Permission modes       | Encoded as OpenCode session rules. Accept edits asks before shell, web, and other non-edit tools; auto answers OpenCode's remaining asks once; full allows everything. A denial goes back to the agent as feedback and the turn continues.                          |
-| Questions              | OpenCode's question tool uses BB's native question UI.                                                                                                                                                                                                              |
+| Questions              | OpenCode's question tool uses BB's native question UI, up to 10 questions at once. Optional fields can be skipped.                                                                                                                                                  |
 | BB dynamic tools       | Exposed to OpenCode through a per-session local MCP server, rendered with the presentation BB supplies, and approved by BB rather than prompting twice.                                                                                                             |
 | OpenCode MCP Code Mode | Your MCP servers keep OpenCode's default Code Mode. Each `execute` call shows as a "Ran code" row titled with the MCP tools it calls; each of those calls is approved like any other tool.                                                                          |
 | BB CLI in shells       | OpenCode shells get BB's per-session environment and `bb` on `PATH`.                                                                                                                                                                                                |
-| Native subagents       | Off by default: OpenCode's `subagent` tool is denied and hidden, so agents delegate through BB. When allowed, each subagent is a BB delegation row with its work nested inside.                                                                                     |
+| Native subagents       | Off by default: OpenCode's `subagent` tool is denied and hidden, so agents delegate through BB. When allowed, each runs in the background as a BB delegation row: its work nests inside while its turn runs, and its report settles the row.                        |
 | Skills                 | BB's `/` menu lists every skill OpenCode discovers for the workspace (`~/.agents/skills`, `~/.claude/skills`, project and config roots), and picking one activates it in OpenCode. BB's own skills that OpenCode does not know are attached as `SKILL.md` files.    |
+| Background work        | A shell still running at its timeout becomes a BB background task linked to its output file. When a background shell or subagent reports back to an idle session, the reply arrives as a new turn.                                                                  |
 | Timeline rows          | Reads, searches, directory listings, web search and fetch, commands with live output and exit codes, and file changes built from OpenCode's own patches.                                                                                                            |
 | Turn diff              | Each turn's file patches are reported as the turn diff.                                                                                                                                                                                                             |
 | Usage and context      | OpenCode's cumulative session tokens, the last request's tokens, and the model's context limit drive BB's usage and context meter.                                                                                                                                  |
