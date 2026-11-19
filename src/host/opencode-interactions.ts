@@ -1,6 +1,8 @@
 import {
   experimental_presentationDetail as presentationDetail,
   experimental_presentationTitle as presentationTitle,
+  USER_QUESTION_MAX_OPTIONS,
+  USER_QUESTION_MAX_QUESTIONS,
 } from "@get-bb/plugin-sdk/provider-bridge";
 import { emit, requestRuntime } from "./bridge-runtime.ts";
 import {
@@ -24,6 +26,117 @@ type RequestOpenCode = (
   path: string,
   init?: RequestInit,
 ) => Promise<RecordValue>;
+
+type FieldAnswer = {
+  value: string | number | boolean | string[];
+  /** How the answer reads in the question row's summary. */
+  text: string;
+};
+
+/**
+ * The form fields BB asks, capped at BB's question limit. Hidden fields keep
+ * OpenCode's defaults and are never shown.
+ */
+export function askableFields(form: RecordValue): RecordValue[] {
+  return (Array.isArray(form.fields) ? form.fields : [])
+    .map(inputRecord)
+    .filter((field) => field.hidden !== true)
+    .slice(0, USER_QUESTION_MAX_QUESTIONS);
+}
+
+function fieldKey(field: RecordValue): string {
+  return String(field.key ?? field.title ?? "q");
+}
+
+/**
+ * OpenCode accepts a reply without any field not marked required, but its
+ * question tool never marks one, and the model expects an answer to each.
+ * Only an explicit `required: false` lets the user skip.
+ */
+function isRequired(field: RecordValue): boolean {
+  return field.required !== false;
+}
+
+export function bbQuestion(field: RecordValue) {
+  const options = Array.isArray(field.options)
+    ? field.options
+        .slice(0, USER_QUESTION_MAX_OPTIONS)
+        .map((value: unknown) => {
+          const option = inputRecord(value);
+          return {
+            label: stringValue(option.label) ?? String(option.value ?? ""),
+            value: String(option.value ?? option.label ?? ""),
+            ...(stringValue(option.description)
+              ? { description: stringValue(option.description) }
+              : {}),
+          };
+        })
+    : undefined;
+  return {
+    id: fieldKey(field),
+    prompt:
+      stringValue(field.description) ?? stringValue(field.title) ?? "Question",
+    ...(stringValue(field.title)
+      ? { shortLabel: stringValue(field.title) }
+      : {}),
+    multiSelect: field.type === "multiselect",
+    allowFreeText: field.custom !== false,
+    required: isRequired(field),
+    ...(options?.length ? { options } : {}),
+  };
+}
+
+/** One field's answer in OpenCode's type, or undefined if none was given. */
+function fieldAnswer(
+  field: RecordValue,
+  entry: unknown,
+): FieldAnswer | undefined {
+  const { selected, freeText } = inputRecord(entry);
+  const picked: string[] = Array.isArray(selected)
+    ? selected.map(String).filter((value) => value.length > 0)
+    : [];
+  const typed = stringValue(freeText);
+  if (field.type === "multiselect") {
+    const values = [...(typed ? [typed] : []), ...picked];
+    return values.length
+      ? { value: values, text: values.join(", ") }
+      : undefined;
+  }
+  const raw = (typed ?? picked[0] ?? "").trim();
+  if (!raw) return undefined;
+  if (field.type === "boolean") {
+    const value = ["true", "yes", "y", "1"].includes(raw.toLowerCase());
+    return { value, text: String(value) };
+  }
+  if (field.type === "number" || field.type === "integer") {
+    const numeric = Number(raw);
+    return { value: Number.isFinite(numeric) ? numeric : raw, text: raw };
+  }
+  return { value: typed ?? picked[0], text: typed ?? picked[0] };
+}
+
+/**
+ * OpenCode's form reply for BB's answers, with a summary for the question row.
+ * Undefined when the user dismissed the question or skipped a required field.
+ */
+export function formReply(
+  fields: readonly RecordValue[],
+  answers: RecordValue | undefined,
+): { answer: RecordValue; summary: string } | undefined {
+  if (!answers) return undefined;
+  const answer: RecordValue = {};
+  const summary: string[] = [];
+  for (const field of fields) {
+    const given = fieldAnswer(field, answers[fieldKey(field)]);
+    if (given) {
+      answer[fieldKey(field)] = given.value;
+      summary.push(given.text);
+    } else if (isRequired(field)) {
+      return undefined;
+    }
+  }
+  return { answer, summary: summary.join("\n") };
+}
 
 export class OpenCodeInteractions {
   constructor(
@@ -214,9 +327,7 @@ export class OpenCodeInteractions {
       return;
     }
     active.openQuestions.set(callId, formId);
-    const fields = (Array.isArray(form.fields) ? form.fields : [])
-      .slice(0, 4)
-      .map(inputRecord);
+    const fields = askableFields(form);
     if (!fields.length) {
       this.closeQuestion(
         session,
@@ -227,35 +338,6 @@ export class OpenCodeInteractions {
       );
       return;
     }
-    const questions = fields.map((field) => {
-      const key = String(field.key ?? field.title ?? "q");
-      const fieldType = stringValue(field.type);
-      const options = Array.isArray(field.options)
-        ? field.options.slice(0, 4).map((value: unknown) => {
-            const option = inputRecord(value);
-            return {
-              label: stringValue(option.label) ?? String(option.value ?? ""),
-              value: String(option.value ?? option.label ?? ""),
-              ...(stringValue(option.description)
-                ? { description: stringValue(option.description) }
-                : {}),
-            };
-          })
-        : undefined;
-      return {
-        id: key,
-        prompt:
-          stringValue(field.description) ??
-          stringValue(field.title) ??
-          "Question",
-        ...(stringValue(field.title)
-          ? { shortLabel: stringValue(field.title) }
-          : {}),
-        multiSelect: fieldType === "multiselect",
-        allowFreeText: field.custom !== false,
-        ...(options?.length ? { options } : {}),
-      };
-    });
     let resolution: RecordValue | undefined;
     try {
       const result = await requestRuntime(
@@ -264,7 +346,7 @@ export class OpenCodeInteractions {
           providerThreadId: session.providerThreadId,
           threadId: session.bbThreadId,
           turnId: active.providerTurnId,
-          payload: { kind: "user_question", questions },
+          payload: { kind: "user_question", questions: fields.map(bbQuestion) },
         },
         { signal: active.abortController.signal },
       );
@@ -273,9 +355,11 @@ export class OpenCodeInteractions {
       resolution = undefined;
     }
     if (session.active !== active || !active.opened.has(callId)) return;
-    const answers: RecordValue | undefined =
-      resolution?.kind === "user_answer" ? resolution.answers : undefined;
-    if (!answers) {
+    const reply = formReply(
+      fields,
+      resolution?.kind === "user_answer" ? resolution.answers : undefined,
+    );
+    if (!reply) {
       await this.cancelQuestionForm(session, formId);
       this.closeQuestion(
         session,
@@ -286,96 +370,10 @@ export class OpenCodeInteractions {
       );
       return;
     }
-    const answer: RecordValue = {};
-    const summary: string[] = [];
-    for (const field of fields) {
-      const key = String(field.key ?? field.title ?? "q");
-      const fieldType = stringValue(field.type);
-      const entry: RecordValue = answers[key] ?? {};
-      const selected: unknown[] = Array.isArray(entry.selected)
-        ? entry.selected
-        : [];
-      const freeText = stringValue(entry.freeText);
-      if (fieldType === "multiselect") {
-        const values = [
-          ...(freeText ? [freeText] : []),
-          ...selected.map(String).filter((value) => value.length > 0),
-        ];
-        if (!values.length) {
-          await this.cancelQuestionForm(session, formId);
-          this.closeQuestion(
-            session,
-            active,
-            callId,
-            "failed",
-            "Question dismissed",
-          );
-          return;
-        }
-        answer[key] = values;
-        summary.push(values.join(", "));
-        continue;
-      }
-      if (fieldType === "boolean") {
-        const raw = (freeText ?? (selected.length ? String(selected[0]) : ""))
-          .trim()
-          .toLowerCase();
-        if (!raw) {
-          await this.cancelQuestionForm(session, formId);
-          this.closeQuestion(
-            session,
-            active,
-            callId,
-            "failed",
-            "Question dismissed",
-          );
-          return;
-        }
-        const value =
-          raw === "true" || raw === "yes" || raw === "y" || raw === "1";
-        answer[key] = value;
-        summary.push(String(value));
-        continue;
-      }
-      if (fieldType === "number" || fieldType === "integer") {
-        const raw = (
-          freeText ?? (selected.length ? String(selected[0]) : "")
-        ).trim();
-        if (!raw) {
-          await this.cancelQuestionForm(session, formId);
-          this.closeQuestion(
-            session,
-            active,
-            callId,
-            "failed",
-            "Question dismissed",
-          );
-          return;
-        }
-        const numeric = Number(raw);
-        answer[key] = Number.isFinite(numeric) ? numeric : raw;
-        summary.push(raw);
-        continue;
-      }
-      const value = freeText ?? (selected.length ? String(selected[0]) : "");
-      if (!value) {
-        await this.cancelQuestionForm(session, formId);
-        this.closeQuestion(
-          session,
-          active,
-          callId,
-          "failed",
-          "Question dismissed",
-        );
-        return;
-      }
-      answer[key] = value;
-      summary.push(value);
-    }
     try {
       await this.request(
         `/api/session/${encodeURIComponent(session.providerThreadId)}/form/${encodeURIComponent(formId)}/reply`,
-        { method: "POST", body: JSON.stringify({ answer }) },
+        { method: "POST", body: JSON.stringify({ answer: reply.answer }) },
       );
     } catch (error) {
       this.closeQuestion(
@@ -387,12 +385,6 @@ export class OpenCodeInteractions {
       );
       return;
     }
-    this.closeQuestion(
-      session,
-      active,
-      callId,
-      "completed",
-      summary.join("\n"),
-    );
+    this.closeQuestion(session, active, callId, "completed", reply.summary);
   }
 }

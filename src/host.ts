@@ -47,6 +47,11 @@ export {
   usageDeltas,
 } from "./host/opencode-event-router.ts";
 export {
+  askableFields,
+  bbQuestion,
+  formReply,
+} from "./host/opencode-interactions.ts";
+export {
   dynamicMcpRegistrationRequest,
   dynamicMcpRemovalRequest,
   forkBoundaryRetainingThrough,
