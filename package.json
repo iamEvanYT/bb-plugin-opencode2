@@ -44,7 +44,7 @@
     "app": "./src/app.tsx"
   },
   "dependencies": {
-    "@get-bb/plugin-sdk": "0.6.80",
+    "@get-bb/plugin-sdk": "^0.6.157",
     "@radix-ui/react-slot": "^1.5.0",
     "zod": "^4.5.4"
   },
