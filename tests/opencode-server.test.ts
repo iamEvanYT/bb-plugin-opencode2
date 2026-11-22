@@ -1,9 +1,37 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import test from "node:test";
 import { OpenCodeServer } from "./support/host-api.js";
+
+test("launches the OpenCode CLI from PATH", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "opencode launch & "));
+  const previousPath = process.env.PATH;
+  t.after(async () => {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    await rm(dir, { recursive: true, force: true });
+  });
+  const script = join(dir, "fake.mjs");
+  await writeFile(script, 'console.log(process.argv.slice(2).join(" "));');
+  await writeFile(
+    join(dir, process.platform === "win32" ? "opencode2.cmd" : "opencode2"),
+    process.platform === "win32"
+      ? `@"${process.execPath}" "${script}" %*\r\n`
+      : `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`,
+    { mode: 0o755 },
+  );
+  process.env.PATH = [dir, previousPath].filter(Boolean).join(delimiter);
+  const server = new OpenCodeServer() as unknown as {
+    cli(args: string[]): Promise<string>;
+  };
+  assert.equal(
+    (await server.cli(["service", "start"])).trim(),
+    "service start",
+  );
+  assert.equal((await server.cli(["pair"])).trim(), "pair");
+});
 
 test("follows checkpoint cursors even when a page is shorter than the requested limit", async () => {
   const paths: string[] = [];

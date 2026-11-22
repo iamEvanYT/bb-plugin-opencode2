@@ -1,8 +1,7 @@
-import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { promisify } from "node:util";
+import { experimental_execHostFile as execFile } from "@get-bb/plugin-sdk/process";
 import { withoutBridgeRuntimeEnv } from "@get-bb/plugin-sdk/provider-bridge";
 import {
   DEFAULT_MODEL_SETTINGS,
@@ -398,7 +397,7 @@ export class OpenCodeServer {
   }
 
   private async cli(args: string[]): Promise<string> {
-    const { stdout } = await promisify(execFile)("opencode2", args, {
+    const { stdout } = await execFile("opencode2", args, {
       env: withoutBridgeRuntimeEnv(process.env),
       timeout: 15_000,
     });

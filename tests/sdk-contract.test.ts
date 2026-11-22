@@ -7,6 +7,7 @@ test("uses only public SDK and package-local imports", () => {
   const packageRoot = fileURLToPath(new URL("..", import.meta.url));
   const scan = experimental_scanPublicSdkOnly(packageRoot, {
     allow: [
+      /^@get-bb\/plugin-sdk\/process$/,
       /^react$/,
       /^@testing-library\/react$/,
       /^@radix-ui\/react-slot$/,
